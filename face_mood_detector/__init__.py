@@ -1,14 +1,20 @@
 """Face Mood Detector - Real-time facial emotion recognition library."""
 
+from .emotions import Emotion, EmotionResult, EMOTION_LABELS
+from .detector import FaceDetector
+from .config import Config, ModelConfig, TrainingConfig, DetectionConfig, default_config
+
 __version__ = "0.1.0"
 __author__ = "Face Mood Detector Contributors"
 
-from face_mood_detector.detector import EmotionDetector
-from face_mood_detector.emotions import Emotion, EmotionResult
-
 __all__ = [
-    "EmotionDetector",
     "Emotion",
     "EmotionResult",
-    "__version__",
+    "EMOTION_LABELS",
+    "FaceDetector",
+    "Config",
+    "ModelConfig",
+    "TrainingConfig",
+    "DetectionConfig",
+    "default_config",
 ]
