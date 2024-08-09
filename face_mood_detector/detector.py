@@ -1,22 +1,22 @@
-"""Main emotion detector class."""
+"""Main emotion detector module.
 
-from typing import List, Optional, Union
+Provides the primary interface for emotion detection from images and video.
+"""
+
 import numpy as np
+from typing import Optional, List, Dict, Any, Union
+from pathlib import Path
 
-from face_mood_detector.emotions import Emotion, EmotionResult
+from .emotions import Emotion, EmotionResult, EMOTION_LABELS
+from .config import DetectorConfig, ModelConfig
+from .face_detector import FaceDetector, DetectedFace
 
 
 class EmotionDetector:
-    """Real-time facial emotion detector using CNN.
+    """Main class for detecting emotions from faces.
     
-    This class provides the main interface for detecting emotions
-    in images and video streams.
-    
-    Args:
-        model_path: Path to pre-trained model weights. If None, uses default.
-        use_gpu: Whether to use GPU acceleration if available.
-        temporal_smoothing: Enable smoothing for video stream stability.
-        smoothing_window: Number of frames for temporal smoothing.
+    This class provides a high-level interface for emotion detection,
+    combining face detection with emotion classification.
     
     Example:
         >>> detector = EmotionDetector()
@@ -26,95 +26,151 @@ class EmotionDetector:
     
     def __init__(
         self,
-        model_path: Optional[str] = None,
-        use_gpu: bool = True,
-        temporal_smoothing: bool = True,
-        smoothing_window: int = 5,
+        detector_config: Optional[DetectorConfig] = None,
+        model_config: Optional[ModelConfig] = None,
+        model_path: Optional[Union[str, Path]] = None
     ):
-        self.model_path = model_path
-        self.use_gpu = use_gpu
-        self.temporal_smoothing = temporal_smoothing
-        self.smoothing_window = smoothing_window
+        """Initialize the emotion detector.
         
-        self._model = None
-        self._face_detector = None
-        self._history: List[np.ndarray] = []
-        
-    def load_model(self) -> None:
-        """Load the CNN model and face detector.
-        
-        Called automatically on first detection if not called manually.
+        Args:
+            detector_config: Configuration for face detection.
+            model_config: Configuration for emotion model.
+            model_path: Path to pre-trained model weights.
         """
-        # TODO: Implement model loading
-        pass
+        self.detector_config = detector_config or DetectorConfig()
+        self.model_config = model_config or ModelConfig()
+        self.model_path = Path(model_path) if model_path else None
+        
+        self._face_detector = FaceDetector(self.detector_config)
+        self._model = None
+        self._model_loaded = False
     
-    def detect_emotion(
+    def _ensure_model_loaded(self) -> None:
+        """Ensure the emotion model is loaded."""
+        if not self._model_loaded:
+            self._load_model()
+    
+    def _load_model(self) -> None:
+        """Load the emotion recognition model."""
+        # Placeholder for model loading
+        # Will be implemented when CNN module is added
+        self._model_loaded = True
+    
+    def detect_emotion(self, image: np.ndarray) -> Optional[EmotionResult]:
+        """Detect emotion from the largest face in an image.
+        
+        Args:
+            image: Input image as numpy array (BGR format).
+            
+        Returns:
+            EmotionResult if a face is detected, None otherwise.
+        """
+        face = self._face_detector.detect_largest_face(image)
+        if face is None:
+            return None
+        
+        return self._classify_emotion(face)
+    
+    def detect_all_emotions(self, image: np.ndarray) -> List[Dict[str, Any]]:
+        """Detect emotions from all faces in an image.
+        
+        Args:
+            image: Input image as numpy array (BGR format).
+            
+        Returns:
+            List of dicts containing face location and emotion result.
+        """
+        faces = self._face_detector.detect_faces(image)
+        
+        results = []
+        for face in faces:
+            emotion_result = self._classify_emotion(face)
+            results.append({
+                'location': face.location,
+                'emotion': emotion_result
+            })
+        
+        return results
+    
+    def _classify_emotion(self, face: DetectedFace) -> EmotionResult:
+        """Classify emotion from a detected face.
+        
+        Args:
+            face: DetectedFace object with preprocessed image.
+            
+        Returns:
+            EmotionResult with emotion predictions.
+        """
+        self._ensure_model_loaded()
+        
+        # Placeholder: generate dummy predictions
+        # Will be replaced with actual model inference
+        predictions = self._mock_predictions()
+        
+        return EmotionResult.from_predictions(predictions)
+    
+    def _mock_predictions(self) -> np.ndarray:
+        """Generate mock predictions for testing.
+        
+        Returns:
+            Array of 7 probability values.
+        """
+        # Generate random probabilities that sum to 1
+        raw = np.random.rand(len(EMOTION_LABELS))
+        probabilities = raw / raw.sum()
+        return probabilities
+    
+    def get_face_locations(self, image: np.ndarray) -> List[tuple]:
+        """Get bounding boxes of all detected faces.
+        
+        Args:
+            image: Input image as numpy array.
+            
+        Returns:
+            List of (x, y, width, height) tuples.
+        """
+        faces = self._face_detector.detect_faces(image)
+        return [face.location for face in faces]
+    
+    def draw_results(
         self,
         image: np.ndarray,
-        return_all_faces: bool = False,
-    ) -> Union[Optional[EmotionResult], List[EmotionResult]]:
-        """Detect emotions in a single image.
-        
-        Args:
-            image: Input image as numpy array (BGR or RGB format).
-            return_all_faces: If True, return results for all detected faces.
-        
-        Returns:
-            EmotionResult for the dominant face, list of results if
-            return_all_faces is True, or None if no face detected.
-        """
-        if self._model is None:
-            self.load_model()
-        
-        # TODO: Implement detection pipeline
-        # 1. Detect faces
-        # 2. Preprocess face regions
-        # 3. Run emotion classification
-        # 4. Apply temporal smoothing if enabled
-        # 5. Return results
-        
-        return None
-    
-    def detect_emotions_batch(
-        self,
-        images: List[np.ndarray],
-    ) -> List[Optional[EmotionResult]]:
-        """Detect emotions in a batch of images.
-        
-        Args:
-            images: List of input images.
-        
-        Returns:
-            List of EmotionResult objects (or None for images with no faces).
-        """
-        return [self.detect_emotion(img) for img in images]
-    
-    def _apply_temporal_smoothing(
-        self,
-        current_scores: np.ndarray,
+        show_confidence: bool = True
     ) -> np.ndarray:
-        """Apply temporal smoothing to emotion scores.
+        """Detect emotions and draw results on image.
         
-        Uses a moving average over recent predictions for stability.
+        Args:
+            image: Input image.
+            show_confidence: Whether to show confidence scores.
+            
+        Returns:
+            Image with drawn emotion results.
         """
-        self._history.append(current_scores)
+        import cv2
         
-        if len(self._history) > self.smoothing_window:
-            self._history.pop(0)
+        output = image.copy()
+        results = self.detect_all_emotions(image)
         
-        if len(self._history) == 0:
-            return current_scores
+        for result in results:
+            x, y, w, h = result['location']
+            emotion = result['emotion']
+            
+            # Draw bounding box
+            cv2.rectangle(output, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            
+            # Draw emotion label
+            label = emotion.dominant_emotion.value
+            if show_confidence:
+                label += f" ({emotion.confidence:.1%})"
+            
+            cv2.putText(
+                output, label, (x, y - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
+            )
         
-        return np.mean(self._history, axis=0)
-    
-    def reset_smoothing(self) -> None:
-        """Reset temporal smoothing history.
-        
-        Call this when switching between different video streams.
-        """
-        self._history.clear()
+        return output
     
     @property
-    def is_loaded(self) -> bool:
-        """Check if the model is loaded."""
-        return self._model is not None
+    def is_model_loaded(self) -> bool:
+        """Check if model is loaded."""
+        return self._model_loaded
