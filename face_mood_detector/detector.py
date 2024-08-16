@@ -1,176 +1,252 @@
-"""Main emotion detector module.
-
-Provides the primary interface for emotion detection from images and video.
-"""
+"""Main emotion detector module."""
 
 import numpy as np
-from typing import Optional, List, Dict, Any, Union
-from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
+import logging
 
-from .emotions import Emotion, EmotionResult, EMOTION_LABELS
-from .config import DetectorConfig, ModelConfig
-from .face_detector import FaceDetector, DetectedFace
+from .emotions import Emotion, EmotionResult
+from .face_detector import FaceDetector
+from .config import DetectorConfig, DEFAULT_CONFIG
+
+logger = logging.getLogger(__name__)
 
 
 class EmotionDetector:
-    """Main class for detecting emotions from faces.
+    """Main class for detecting emotions in faces."""
     
-    This class provides a high-level interface for emotion detection,
-    combining face detection with emotion classification.
-    
-    Example:
-        >>> detector = EmotionDetector()
-        >>> result = detector.detect_emotion(image)
-        >>> print(result.dominant_emotion)
-    """
-    
-    def __init__(
-        self,
-        detector_config: Optional[DetectorConfig] = None,
-        model_config: Optional[ModelConfig] = None,
-        model_path: Optional[Union[str, Path]] = None
-    ):
-        """Initialize the emotion detector.
+    def __init__(self, config: Optional[DetectorConfig] = None):
+        """
+        Initialize the emotion detector.
         
         Args:
-            detector_config: Configuration for face detection.
-            model_config: Configuration for emotion model.
-            model_path: Path to pre-trained model weights.
+            config: Configuration options for the detector
         """
-        self.detector_config = detector_config or DetectorConfig()
-        self.model_config = model_config or ModelConfig()
-        self.model_path = Path(model_path) if model_path else None
-        
-        self._face_detector = FaceDetector(self.detector_config)
+        self.config = config or DEFAULT_CONFIG
+        self._face_detector = None
         self._model = None
-        self._model_loaded = False
+        self._initialized = False
+        self._emotion_history: List[Dict[Emotion, float]] = []
+        
+    def initialize(self) -> bool:
+        """
+        Initialize the detector and load models.
+        
+        Returns:
+            True if initialization successful
+        """
+        try:
+            self._face_detector = FaceDetector(
+                method=self.config.face_detection_method,
+                min_confidence=self.config.min_face_confidence
+            )
+            
+            # Model loading will be implemented later
+            self._model = None
+            self._initialized = True
+            
+            logger.info("EmotionDetector initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize EmotionDetector: {e}")
+            self._initialized = False
+            return False
     
-    def _ensure_model_loaded(self) -> None:
-        """Ensure the emotion model is loaded."""
-        if not self._model_loaded:
-            self._load_model()
+    @property
+    def is_initialized(self) -> bool:
+        """Check if detector is initialized."""
+        return self._initialized
     
-    def _load_model(self) -> None:
-        """Load the emotion recognition model."""
-        # Placeholder for model loading
-        # Will be implemented when CNN module is added
-        self._model_loaded = True
-    
-    def detect_emotion(self, image: np.ndarray) -> Optional[EmotionResult]:
-        """Detect emotion from the largest face in an image.
+    def detect_emotions(self, image: np.ndarray) -> List[EmotionResult]:
+        """
+        Detect emotions in all faces in an image.
         
         Args:
-            image: Input image as numpy array (BGR format).
+            image: Input image (BGR format)
             
         Returns:
-            EmotionResult if a face is detected, None otherwise.
+            List of EmotionResult for each detected face
         """
-        face = self._face_detector.detect_largest_face(image)
-        if face is None:
-            return None
+        if not self._initialized:
+            logger.warning("Detector not initialized. Call initialize() first.")
+            if not self.initialize():
+                return []
         
-        return self._classify_emotion(face)
-    
-    def detect_all_emotions(self, image: np.ndarray) -> List[Dict[str, Any]]:
-        """Detect emotions from all faces in an image.
+        # Validate input image
+        if image is None:
+            logger.warning("Received None image")
+            return []
         
-        Args:
-            image: Input image as numpy array (BGR format).
-            
-        Returns:
-            List of dicts containing face location and emotion result.
-        """
-        faces = self._face_detector.detect_faces(image)
+        if not isinstance(image, np.ndarray):
+            logger.warning(f"Expected numpy array, got {type(image)}")
+            return []
+        
+        if image.size == 0:
+            logger.warning("Received empty image")
+            return []
+        
+        if len(image.shape) < 2:
+            logger.warning(f"Invalid image shape: {image.shape}")
+            return []
+        
+        # Detect faces
+        try:
+            faces = self._face_detector.detect_faces(image)
+        except Exception as e:
+            logger.error(f"Face detection failed: {e}")
+            return []
+        
+        if not faces:
+            logger.debug("No faces detected in image")
+            return []
         
         results = []
-        for face in faces:
-            emotion_result = self._classify_emotion(face)
-            results.append({
-                'location': face.location,
-                'emotion': emotion_result
-            })
+        
+        for bbox in faces:
+            try:
+                # Extract face region
+                face = self._face_detector.extract_face(
+                    image, 
+                    bbox,
+                    target_size=(self.config.input_size, self.config.input_size)
+                )
+                
+                if face is None:
+                    logger.debug(f"Failed to extract face at {bbox}")
+                    continue
+                
+                # Predict emotions
+                emotion_scores = self._predict_emotions(face)
+                
+                if emotion_scores is None:
+                    logger.debug(f"Failed to predict emotions for face at {bbox}")
+                    continue
+                
+                # Apply temporal smoothing if enabled
+                if self.config.enable_temporal_smoothing:
+                    emotion_scores = self._apply_temporal_smoothing(emotion_scores)
+                
+                # Get dominant emotion
+                dominant_emotion = max(emotion_scores, key=emotion_scores.get)
+                confidence = emotion_scores[dominant_emotion]
+                
+                result = EmotionResult(
+                    emotion=dominant_emotion,
+                    confidence=confidence,
+                    all_scores=emotion_scores,
+                    face_bbox=bbox
+                )
+                
+                results.append(result)
+                
+            except Exception as e:
+                logger.error(f"Error processing face at {bbox}: {e}")
+                continue
         
         return results
     
-    def _classify_emotion(self, face: DetectedFace) -> EmotionResult:
-        """Classify emotion from a detected face.
+    def _predict_emotions(self, face: np.ndarray) -> Optional[Dict[Emotion, float]]:
+        """
+        Predict emotions for a preprocessed face image.
         
         Args:
-            face: DetectedFace object with preprocessed image.
+            face: Preprocessed face image
             
         Returns:
-            EmotionResult with emotion predictions.
+            Dictionary mapping emotions to confidence scores
         """
-        self._ensure_model_loaded()
+        if face is None or face.size == 0:
+            return None
         
-        # Placeholder: generate dummy predictions
-        # Will be replaced with actual model inference
-        predictions = self._mock_predictions()
-        
-        return EmotionResult.from_predictions(predictions)
+        # Placeholder: return dummy predictions
+        # Real implementation will use the CNN model
+        try:
+            # Generate placeholder scores
+            scores = {
+                Emotion.HAPPY: 0.15,
+                Emotion.SAD: 0.10,
+                Emotion.ANGRY: 0.10,
+                Emotion.FEAR: 0.10,
+                Emotion.SURPRISE: 0.15,
+                Emotion.DISGUST: 0.10,
+                Emotion.NEUTRAL: 0.30
+            }
+            
+            # Normalize scores to sum to 1.0
+            total = sum(scores.values())
+            if total > 0:
+                scores = {k: v / total for k, v in scores.items()}
+            else:
+                # Fallback to uniform distribution
+                uniform_score = 1.0 / len(Emotion)
+                scores = {e: uniform_score for e in Emotion}
+            
+            return scores
+            
+        except Exception as e:
+            logger.error(f"Error in emotion prediction: {e}")
+            return None
     
-    def _mock_predictions(self) -> np.ndarray:
-        """Generate mock predictions for testing.
-        
-        Returns:
-            Array of 7 probability values.
+    def _apply_temporal_smoothing(self, scores: Dict[Emotion, float]) -> Dict[Emotion, float]:
         """
-        # Generate random probabilities that sum to 1
-        raw = np.random.rand(len(EMOTION_LABELS))
-        probabilities = raw / raw.sum()
-        return probabilities
-    
-    def get_face_locations(self, image: np.ndarray) -> List[tuple]:
-        """Get bounding boxes of all detected faces.
+        Apply temporal smoothing to emotion scores.
         
         Args:
-            image: Input image as numpy array.
+            scores: Current emotion scores
             
         Returns:
-            List of (x, y, width, height) tuples.
+            Smoothed emotion scores
         """
-        faces = self._face_detector.detect_faces(image)
-        return [face.location for face in faces]
+        if not scores:
+            return scores
+        
+        self._emotion_history.append(scores)
+        
+        # Keep only recent history
+        window = self.config.smoothing_window
+        if len(self._emotion_history) > window:
+            self._emotion_history = self._emotion_history[-window:]
+        
+        if len(self._emotion_history) < 2:
+            return scores
+        
+        # Average scores over history
+        smoothed = {}
+        for emotion in Emotion:
+            values = [h.get(emotion, 0.0) for h in self._emotion_history]
+            smoothed[emotion] = sum(values) / len(values)
+        
+        # Renormalize
+        total = sum(smoothed.values())
+        if total > 0:
+            smoothed = {k: v / total for k, v in smoothed.items()}
+        
+        return smoothed
     
-    def draw_results(
-        self,
-        image: np.ndarray,
-        show_confidence: bool = True
-    ) -> np.ndarray:
-        """Detect emotions and draw results on image.
+    def reset_history(self) -> None:
+        """Reset temporal smoothing history."""
+        self._emotion_history.clear()
+        logger.debug("Emotion history cleared")
+    
+    def detect_single_face(self, image: np.ndarray) -> Optional[EmotionResult]:
+        """
+        Detect emotion for the largest face in an image.
         
         Args:
-            image: Input image.
-            show_confidence: Whether to show confidence scores.
+            image: Input image (BGR format)
             
         Returns:
-            Image with drawn emotion results.
+            EmotionResult for the largest face, or None if no face found
         """
-        import cv2
+        results = self.detect_emotions(image)
         
-        output = image.copy()
-        results = self.detect_all_emotions(image)
+        if not results:
+            return None
         
-        for result in results:
-            x, y, w, h = result['location']
-            emotion = result['emotion']
-            
-            # Draw bounding box
-            cv2.rectangle(output, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            
-            # Draw emotion label
-            label = emotion.dominant_emotion.value
-            if show_confidence:
-                label += f" ({emotion.confidence:.1%})"
-            
-            cv2.putText(
-                output, label, (x, y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-            )
+        # Return result for largest face (by area)
+        largest = max(
+            results,
+            key=lambda r: r.face_bbox[2] * r.face_bbox[3] if r.face_bbox else 0
+        )
         
-        return output
-    
-    @property
-    def is_model_loaded(self) -> bool:
-        """Check if model is loaded."""
-        return self._model_loaded
+        return largest
