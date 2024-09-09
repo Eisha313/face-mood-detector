@@ -1,164 +1,229 @@
-"""Configuration settings for face mood detector."""
+"""Configuration management for the face mood detector.
 
-from dataclasses import dataclass, field
-from typing import Tuple, Dict, Any
+This module provides configuration classes for customizing the behavior
+of the emotion detector, including model settings, detection parameters,
+and output options.
+"""
+
+from __future__ import annotations
+
 import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional, Union
+
+
+# Default paths and constants
+DEFAULT_MODEL_PATH = Path(__file__).parent / "models" / "emotion_model.h5"
+DEFAULT_CASCADE_PATH = Path(__file__).parent / "data" / "haarcascade_frontalface_default.xml"
+
+# Environment variable overrides
+ENV_MODEL_PATH = "FACE_MOOD_MODEL_PATH"
+ENV_CASCADE_PATH = "FACE_MOOD_CASCADE_PATH"
+ENV_USE_GPU = "FACE_MOOD_USE_GPU"
 
 
 @dataclass
-class ModelConfig:
-    """Configuration for the CNN model architecture."""
-    
-    # Input image dimensions
-    input_size: Tuple[int, int] = (48, 48)
-    num_channels: int = 1  # Grayscale
-    
-    # Model architecture
-    num_classes: int = 7
-    dropout_rate: float = 0.25
-    
-    # Convolutional layers
-    conv_filters: Tuple[int, ...] = (32, 64, 128, 256)
-    kernel_size: Tuple[int, int] = (3, 3)
-    pool_size: Tuple[int, int] = (2, 2)
-    
-    # Dense layers
-    dense_units: Tuple[int, ...] = (512, 256)
-    
-    # Batch normalization
-    use_batch_norm: bool = True
+class DetectorConfig:
+    """Configuration options for the EmotionDetector.
 
+    This class holds all configurable parameters for emotion detection,
+    including model paths, detection thresholds, and processing options.
 
-@dataclass
-class TrainingConfig:
-    """Configuration for model training."""
-    
-    # Training hyperparameters
-    batch_size: int = 32
-    epochs: int = 50
-    learning_rate: float = 0.001
-    
-    # Learning rate schedule
-    lr_decay_factor: float = 0.5
-    lr_decay_patience: int = 5
-    min_learning_rate: float = 1e-7
-    
-    # Early stopping
-    early_stopping_patience: int = 10
-    
-    # Data augmentation
-    use_augmentation: bool = True
-    rotation_range: int = 15
-    width_shift_range: float = 0.1
-    height_shift_range: float = 0.1
-    horizontal_flip: bool = True
-    zoom_range: float = 0.1
-    
-    # Validation
-    validation_split: float = 0.2
+    Attributes:
+        model_path: Path to the trained emotion recognition model
+        cascade_path: Path to the Haar cascade for face detection
+        use_gpu: Whether to use GPU acceleration if available
+        confidence_threshold: Minimum confidence for valid detections
+        face_min_size: Minimum face size in pixels (width, height)
+        face_scale_factor: Scale factor for face detection pyramid
+        face_min_neighbors: Minimum neighbors for face detection
+        input_size: Expected input size for the emotion model (width, height)
+        enable_smoothing: Whether to apply temporal smoothing
+        smoothing_window: Number of frames for temporal smoothing
+        batch_size: Batch size for processing multiple faces
 
+    Example:
+        >>> config = DetectorConfig(
+        ...     confidence_threshold=0.7,
+        ...     enable_smoothing=True,
+        ...     smoothing_window=5
+        ... )
+        >>> detector = EmotionDetector(config=config)
+    """
 
-@dataclass
-class DetectionConfig:
-    """Configuration for real-time detection."""
-    
-    # Face detection
-    face_cascade_path: str = "haarcascade_frontalface_default.xml"
-    min_face_size: Tuple[int, int] = (30, 30)
-    scale_factor: float = 1.1
-    min_neighbors: int = 5
-    
-    # Temporal smoothing
-    use_smoothing: bool = True
+    # Model settings
+    model_path: Optional[Union[str, Path]] = None
+    cascade_path: Optional[Union[str, Path]] = None
+    use_gpu: bool = False
+
+    # Detection thresholds
+    confidence_threshold: float = 0.5
+
+    # Face detection parameters
+    face_min_size: tuple[int, int] = (30, 30)
+    face_scale_factor: float = 1.1
+    face_min_neighbors: int = 5
+
+    # Model input settings
+    input_size: tuple[int, int] = (48, 48)
+
+    # Smoothing settings
+    enable_smoothing: bool = True
     smoothing_window: int = 5
-    smoothing_method: str = "exponential"  # "exponential" or "moving_average"
-    exponential_alpha: float = 0.3
-    
-    # Confidence threshold
-    min_confidence: float = 0.3
-    
-    # Performance
-    skip_frames: int = 0  # Process every Nth frame (0 = process all)
-    max_faces: int = 10
 
+    # Processing settings
+    batch_size: int = 1
 
-@dataclass
-class Config:
-    """Main configuration container."""
-    
-    model: ModelConfig = field(default_factory=ModelConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    detection: DetectionConfig = field(default_factory=DetectionConfig)
-    
-    # Paths
-    model_dir: str = "models"
-    default_model_name: str = "emotion_model.h5"
-    cache_dir: str = ".cache"
-    
-    # Logging
-    log_level: str = "INFO"
-    
-    @property
-    def default_model_path(self) -> str:
-        """Get the default model file path."""
-        return os.path.join(self.model_dir, self.default_model_name)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert configuration to dictionary."""
-        return {
-            "model": {
-                "input_size": self.model.input_size,
-                "num_channels": self.model.num_channels,
-                "num_classes": self.model.num_classes,
-                "dropout_rate": self.model.dropout_rate,
-                "conv_filters": self.model.conv_filters,
-                "kernel_size": self.model.kernel_size,
-                "pool_size": self.model.pool_size,
-                "dense_units": self.model.dense_units,
-                "use_batch_norm": self.model.use_batch_norm,
-            },
-            "training": {
-                "batch_size": self.training.batch_size,
-                "epochs": self.training.epochs,
-                "learning_rate": self.training.learning_rate,
-                "lr_decay_factor": self.training.lr_decay_factor,
-                "lr_decay_patience": self.training.lr_decay_patience,
-                "early_stopping_patience": self.training.early_stopping_patience,
-                "use_augmentation": self.training.use_augmentation,
-                "validation_split": self.training.validation_split,
-            },
-            "detection": {
-                "min_face_size": self.detection.min_face_size,
-                "scale_factor": self.detection.scale_factor,
-                "min_neighbors": self.detection.min_neighbors,
-                "use_smoothing": self.detection.use_smoothing,
-                "smoothing_window": self.detection.smoothing_window,
-                "min_confidence": self.detection.min_confidence,
-            },
-        }
-    
+    def __post_init__(self) -> None:
+        """Initialize and validate configuration after dataclass creation."""
+        # Apply environment variable overrides
+        self._apply_env_overrides()
+
+        # Convert paths to Path objects
+        if self.model_path is not None:
+            self.model_path = Path(self.model_path)
+        if self.cascade_path is not None:
+            self.cascade_path = Path(self.cascade_path)
+
+        # Validate configuration
+        self._validate()
+
+    def _apply_env_overrides(self) -> None:
+        """Apply configuration overrides from environment variables."""
+        if ENV_MODEL_PATH in os.environ and self.model_path is None:
+            self.model_path = os.environ[ENV_MODEL_PATH]
+
+        if ENV_CASCADE_PATH in os.environ and self.cascade_path is None:
+            self.cascade_path = os.environ[ENV_CASCADE_PATH]
+
+        if ENV_USE_GPU in os.environ:
+            self.use_gpu = os.environ[ENV_USE_GPU].lower() in ("1", "true", "yes")
+
+    def _validate(self) -> None:
+        """Validate configuration parameters.
+
+        Raises:
+            ValueError: If any configuration parameter is invalid
+        """
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ValueError(
+                f"confidence_threshold must be between 0.0 and 1.0, "
+                f"got {self.confidence_threshold}"
+            )
+
+        if self.face_scale_factor <= 1.0:
+            raise ValueError(
+                f"face_scale_factor must be greater than 1.0, "
+                f"got {self.face_scale_factor}"
+            )
+
+        if self.face_min_neighbors < 1:
+            raise ValueError(
+                f"face_min_neighbors must be at least 1, "
+                f"got {self.face_min_neighbors}"
+            )
+
+        if self.smoothing_window < 1:
+            raise ValueError(
+                f"smoothing_window must be at least 1, "
+                f"got {self.smoothing_window}"
+            )
+
+        if self.batch_size < 1:
+            raise ValueError(
+                f"batch_size must be at least 1, got {self.batch_size}"
+            )
+
+        if any(dim < 10 for dim in self.input_size):
+            raise ValueError(
+                f"input_size dimensions must be at least 10, "
+                f"got {self.input_size}"
+            )
+
+        if any(dim < 10 for dim in self.face_min_size):
+            raise ValueError(
+                f"face_min_size dimensions must be at least 10, "
+                f"got {self.face_min_size}"
+            )
+
+    def get_model_path(self) -> Path:
+        """Get the resolved model path.
+
+        Returns:
+            Path to the emotion recognition model
+
+        Raises:
+            FileNotFoundError: If no valid model path is configured
+        """
+        if self.model_path is not None:
+            return self.model_path
+        if DEFAULT_MODEL_PATH.exists():
+            return DEFAULT_MODEL_PATH
+        raise FileNotFoundError(
+            "No model path configured. Set model_path or "
+            f"the {ENV_MODEL_PATH} environment variable."
+        )
+
+    def get_cascade_path(self) -> Path:
+        """Get the resolved cascade path.
+
+        Returns:
+            Path to the Haar cascade file
+
+        Raises:
+            FileNotFoundError: If no valid cascade path is configured
+        """
+        if self.cascade_path is not None:
+            return self.cascade_path
+        if DEFAULT_CASCADE_PATH.exists():
+            return DEFAULT_CASCADE_PATH
+        raise FileNotFoundError(
+            "No cascade path configured. Set cascade_path or "
+            f"the {ENV_CASCADE_PATH} environment variable."
+        )
+
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "Config":
-        """Create configuration from dictionary."""
-        config = cls()
-        
-        if "model" in config_dict:
-            for key, value in config_dict["model"].items():
-                if hasattr(config.model, key):
-                    setattr(config.model, key, value)
-        
-        if "training" in config_dict:
-            for key, value in config_dict["training"].items():
-                if hasattr(config.training, key):
-                    setattr(config.training, key, value)
-        
-        if "detection" in config_dict:
-            for key, value in config_dict["detection"].items():
-                if hasattr(config.detection, key):
-                    setattr(config.detection, key, value)
-        
-        return config
+    def from_dict(cls, config_dict: dict) -> DetectorConfig:
+        """Create a configuration from a dictionary.
 
+        Args:
+            config_dict: Dictionary of configuration parameters
 
-# Default configuration instance
-default_config = Config()
+        Returns:
+            DetectorConfig instance
+
+        Example:
+            >>> config = DetectorConfig.from_dict({
+            ...     "confidence_threshold": 0.8,
+            ...     "use_gpu": True
+            ... })
+        """
+        return cls(**config_dict)
+
+    def to_dict(self) -> dict:
+        """Convert configuration to a dictionary.
+
+        Returns:
+            Dictionary representation of the configuration
+        """
+        return {
+            "model_path": str(self.model_path) if self.model_path else None,
+            "cascade_path": str(self.cascade_path) if self.cascade_path else None,
+            "use_gpu": self.use_gpu,
+            "confidence_threshold": self.confidence_threshold,
+            "face_min_size": self.face_min_size,
+            "face_scale_factor": self.face_scale_factor,
+            "face_min_neighbors": self.face_min_neighbors,
+            "input_size": self.input_size,
+            "enable_smoothing": self.enable_smoothing,
+            "smoothing_window": self.smoothing_window,
+            "batch_size": self.batch_size,
+        }
+
+    def __str__(self) -> str:
+        """Return a human-readable string representation."""
+        return (
+            f"DetectorConfig(threshold={self.confidence_threshold}, "
+            f"gpu={self.use_gpu}, smoothing={self.enable_smoothing})"
+        )
